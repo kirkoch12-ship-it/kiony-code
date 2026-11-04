@@ -54,7 +54,7 @@ export default async (req) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.COMETAPI_KEY}` },
       body: JSON.stringify({ model, messages: msgs, max_tokens: p.maxTok }),
-      signal: AbortSignal.timeout(170000),
+      signal: AbortSignal.timeout(90000),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error?.message || `Ошибка модели ${r.status}`);
