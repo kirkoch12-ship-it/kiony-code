@@ -6,28 +6,53 @@
 <title>Kiony Code</title>
 <style>
 [hidden]{display:none!important}
-body{margin:0;background:#0b0b0b;color:#e6e6e6;font:14px/1.5 ui-monospace,Menlo,Consolas,monospace}
-#top{padding:10px 14px;border-bottom:1px solid #222;color:#888;word-break:break-word}
-#top b{color:#fff}
-#auth{padding:16px;display:flex;flex-direction:column;gap:9px;max-width:340px}
-.f{background:#151515;border:1px solid #2a2a2a;color:#fff;padding:9px 10px;border-radius:6px;font:inherit;outline:none}
-.f:focus{border-color:#555}
-button{background:#fff;color:#000;border:0;border-radius:6px;padding:9px;font:600 14px ui-monospace,monospace;cursor:pointer}
-button.g{background:none;color:#ccc;border:1px solid #333}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:#1b1b1b;color:#d8d8d8;font:14px/1.55 ui-monospace,Menlo,Consolas,"Courier New",monospace;display:flex;flex-direction:column}
+#auth{margin:30px auto;width:100%;max-width:340px;padding:0 16px;display:flex;flex-direction:column;gap:9px}
+#auth .t{color:#d97757;font-weight:700}
+.f{background:#141414;border:1px solid #3a3a3a;color:#fff;padding:9px 10px;border-radius:6px;font:inherit;outline:none}
+.f:focus{border-color:#d97757}
+button{background:#d8d8d8;color:#111;border:0;border-radius:6px;padding:9px;font:600 14px ui-monospace,monospace;cursor:pointer}
+button.g{background:none;color:#ccc;border:1px solid #3a3a3a}
 #aerr{color:#f87171;min-height:20px}
-#out{padding:14px;height:calc(100vh - 135px);overflow-y:auto;white-space:pre-wrap;word-break:break-word}
-#out div{margin:2px 0}
-.u{color:#fff}.a{color:#d6d6d6}.e{color:#f87171}.s{color:#777}
-#bar{border-top:1px solid #222;padding:10px 14px;display:flex;gap:8px;align-items:center}
-#bar span{color:#e0a458}
-#in{flex:1;background:none;border:0;color:#fff;font:inherit;outline:none}
+#head{margin:12px 12px 0;border:1px solid #3a3a3a;border-radius:10px;padding:12px 14px;display:flex;gap:16px;align-items:center}
+.mark{color:#d97757;margin:0;font:15px/1.1 ui-monospace,monospace;white-space:pre}
+.info{min-width:0}
+.info div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.info b{color:#fff}
+.info .s{color:#8a8a8a}
+#log{flex:1;overflow-y:auto;padding:12px 14px;min-height:120px}
+.msg{margin:8px 0;white-space:pre-wrap;word-break:break-word}
+.msg.user{background:#2c2c2c;border-radius:6px;padding:6px 10px;color:#fff}
+.msg.bot::before{content:"⏺ ";color:#d97757}
+.msg.sys{color:#8a8a8a}
+.msg.err{color:#f87171}
+.msg.hint{color:#e0a458;font-size:13px}
+.msg.think{color:#d97757}
+#menu{margin:0 12px;border:1px solid #3a3a3a;border-radius:8px;background:#202020;max-height:200px;overflow-y:auto}
+#menu div{padding:7px 10px;cursor:pointer;display:flex;gap:14px}
+#menu div:hover{background:#2c2c2c}
+#menu span{color:#8a8a8a}
+#inbox{margin:8px 12px 0;border:1px solid #3a3a3a;border-radius:10px;padding:9px 12px;display:flex;gap:8px;align-items:center}
+#inbox .p{color:#d97757}
+#in{flex:1;background:none;border:0;color:#fff;font:inherit;outline:none;min-width:0}
+#status{padding:6px 14px 10px;color:#7a7a7a;font-size:12px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+#mask{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
+#modal{background:#202020;border:1px solid #3a3a3a;border-radius:10px;padding:14px;width:100%;max-width:520px;max-height:85vh;overflow-y:auto}
+#modal h3{margin:0 0 10px;color:#fff;font-size:15px}
+.row{padding:8px 0;border-bottom:1px solid #2c2c2c}
+.row.on{color:#d97757}
+.tbtn{display:block;width:100%;background:none;color:#ddd;border:1px solid #3a3a3a;text-align:left;margin:5px 0;padding:9px}
+.tbtn:hover{border-color:#d97757}
+.tbtn:disabled{opacity:.4}
+.hintp{color:#8a8a8a;font-size:13px;margin-top:10px}
 </style>
 </head>
 <body>
-<div id="top"><b>Kiony Code</b> <span id="st">вход не выполнен</span></div>
 
 <div id="auth">
-  <div class="s">Вход в Kiony Code</div>
+  <div class="t">Kiony Code</div>
   <input id="em" class="f" type="email" placeholder="почта" autocomplete="email">
   <input id="pw" class="f" type="password" placeholder="пароль (от 6 символов)" autocomplete="current-password">
   <button id="login">Войти</button>
@@ -35,25 +60,40 @@ button.g{background:none;color:#ccc;border:1px solid #333}
   <div id="aerr"></div>
 </div>
 
-<div id="out" hidden></div>
-<div id="bar" hidden><span>❯</span><input id="in" autocomplete="off" placeholder="напиши запрос или /help"></div>
+<div id="head" hidden>
+  <pre class="mark"> ▐▛███▜▌
+▝▜█████▛▘
+  ▘▘ ▝▝</pre>
+  <div class="info">
+    <div><b>Kiony Code</b> <span class="s">v1.0</span></div>
+    <div id="h1" class="s"></div>
+    <div id="h2" class="s"></div>
+    <div id="h3" class="s"></div>
+  </div>
+</div>
+
+<div id="log" hidden></div>
+<div id="menu" hidden></div>
+<div id="inbox" hidden><span class="p">❯</span><input id="in" autocomplete="off" placeholder="напиши запрос или / для команд"></div>
+<div id="status" hidden><span id="stL"></span><span>/ команды</span></div>
+<div id="mask" hidden><div id="modal"></div></div>
 
 <script>
 const $ = s => document.querySelector(s);
-const out = $('#out');
 const API = '/api';
+const PREF = ['claude-haiku-5-5', 'gpt-6-luna', 'doubao-seed-2-0-mini-260215'];
+const CMDS = [
+  ['/models', 'выбрать модель'], ['/plans', 'тарифы и подписка'], ['/limits', 'лимиты на сегодня'],
+  ['/code', 'ввести код активации'], ['/settings', 'настройки'], ['/clear', 'очистить чат'],
+  ['/help', 'помощь'], ['/logout', 'выйти'],
+];
 let token = localStorage.getItem('kc_token') || '';
-let st = null;
-let model = 'doubao-seed-2-0-mini-260215';
-let hist = [];
+let st = null, model = PREF[0], hist = [], busy = false;
 
-const print = (t, c = 'a') => {
-  const d = document.createElement('div');
-  d.className = c; d.textContent = t;
-  out.appendChild(d); out.scrollTop = out.scrollHeight;
-  return d;
-};
+const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
+const say = (cls, text) => { const d = el('div', 'msg ' + cls, text); $('#log').appendChild(d); $('#log').scrollTop = 1e9; return d; };
 
+// Все запросы идут через сервер. Ключ CometAPI на странице не нужен.
 async function call(path, body) {
   const r = await fetch(API + path, {
     method: body ? 'POST' : 'GET',
@@ -65,17 +105,96 @@ async function call(path, body) {
   return j;
 }
 
-function renderTop() {
+function renderHead() {
   if (!st) return;
   const u = st.usage, l = st.limits;
-  $('#st').textContent = `${st.email} · ${st.planName} · ${model} · запросы ${u.r}/${l.req} · токены ${u.t}/${l.tok} · $${u.c.toFixed(4)}/${l.bud}`;
+  $('#h1').textContent = `${st.planName} · ${model}`;
+  $('#h2').textContent = st.email;
+  $('#h3').textContent = `запросы ${u.r}/${l.req} · токены ${u.t}/${l.tok} · $${u.c.toFixed(4)}/${l.bud} в день`;
+  $('#stL').textContent = `план ${st.planName} · ${model}`;
+}
+
+function clearChat() {
+  $('#log').innerHTML = '';
+  hist = [];
+  say('sys', 'Чат очищен.');
+}
+
+function closeM() { $('#mask').hidden = true; }
+
+function modal(title, build) {
+  const box = $('#modal');
+  box.innerHTML = '';
+  box.append(el('h3', null, title));
+  build(box);
+  const x = el('button', 'g', 'Закрыть');
+  x.style.width = '100%'; x.style.marginTop = '10px';
+  x.onclick = closeM;
+  box.append(x);
+  $('#mask').hidden = false;
+}
+
+function openModels() {
+  modal(`Модели · план ${st.planName}`, box => {
+    st.models.forEach(m => {
+      const b = el('button', 'tbtn', `${m.id === model ? '● ' : '   '}${m.name}  —  ${m.cap ? 'лимит ' + m.cap + ' в день' : 'недоступна на плане'}`);
+      b.disabled = !m.cap;
+      b.onclick = () => { model = m.id; closeM(); renderHead(); say('sys', 'Модель: ' + m.name); };
+      box.append(b);
+    });
+  });
+}
+
+function openPlans() {
+  modal('Тарифы', box => {
+    st.plans.forEach(p => {
+      box.append(el('div', 'row' + (p.name === st.planName ? ' on' : ''),
+        `${p.name}   $${p.m}/мес · $${p.w}/нед   запросов ${p.req}, токенов ${p.tok}, расход $${p.bud}/день`));
+    });
+    box.append(el('div', 'hintp', 'Купить подписку: напиши @kionylixe в Telegram. После оплаты введи полученный код командой /code КОД.'));
+  });
+}
+
+function openSettings() {
+  modal('Настройки', box => {
+    box.append(el('div', 'row', `Аккаунт: ${st.email}`));
+    box.append(el('div', 'row', `План: ${st.planName}${st.until ? ' до ' + new Date(st.until).toLocaleDateString('ru') : ''}`));
+    const a = el('button', 'tbtn', 'Очистить чат');
+    a.onclick = () => { closeM(); clearChat(); };
+    const b = el('button', 'tbtn', 'Выйти из аккаунта');
+    b.onclick = () => { closeM(); logout(); };
+    box.append(a, b);
+  });
+}
+
+function logout() {
+  localStorage.removeItem('kc_token');
+  location.reload();
+}
+
+function showMenu(v) {
+  const m = $('#menu');
+  if (!v.startsWith('/')) { m.hidden = true; return; }
+  const word = v.split(' ')[0].toLowerCase();
+  const list = CMDS.filter(c => c[0].startsWith(word));
+  m.innerHTML = '';
+  list.forEach(([c, d]) => {
+    const r = el('div');
+    r.append(el('b', null, c), el('span', null, d));
+    r.onclick = () => { $('#in').value = c + ' '; $('#in').focus(); showMenu($('#in').value); };
+    m.appendChild(r);
+  });
+  m.hidden = !list.length;
 }
 
 async function enter() {
   st = await call('/me');
-  $('#auth').hidden = true; out.hidden = false; $('#bar').hidden = false;
-  renderTop();
-  if (!out.childElementCount) print('Kiony Code. Напиши запрос или /help.', 's');
+  $('#auth').hidden = true; $('#head').hidden = false; $('#log').hidden = false;
+  $('#inbox').hidden = false; $('#status').hidden = false;
+  const ok = id => st.models.some(m => m.id === id && m.cap);
+  if (!ok(model)) model = PREF.find(ok) || (st.models.find(m => m.cap) || {}).id || model;
+  renderHead();
+  if (!$('#log').childElementCount) say('sys', 'Добро пожаловать в Kiony Code. Напиши запрос или / для команд.');
   $('#in').focus();
 }
 
@@ -89,55 +208,71 @@ async function auth(action) {
 }
 
 async function command(line) {
-  const [cmd, ...rest] = line.split(' ');
-  const arg = rest.join(' ').trim();
-  if (cmd === '/help') return print('/models    модели и лимиты на сегодня\n/model <id>  выбрать модель\n/limits    лимиты и расход за сегодня\n/code <КОД>  активировать план\n/clear     очистить экран\n/logout    выйти', 's');
-  if (cmd === '/models') return st.models.forEach(m => print(`${m.id === model ? '● ' : '  '}${m.id}  ${m.name}  ${m.cap ? 'лимит ' + m.cap + ' в день' : 'недоступна на плане ' + st.planName}`));
-  if (cmd === '/model') {
-    const m = st.models.find(x => x.id === arg);
-    if (!m) return print('Нет такой модели. Список: /models', 'e');
-    if (!m.cap) return print(`${m.name} недоступна на плане ${st.planName}`, 'e');
-    model = m.id; renderTop(); return print(`Модель: ${m.name}`, 's');
-  }
-  if (cmd === '/limits') {
+  const [c, ...r] = line.trim().split(/\s+/);
+  const arg = r.join(' ');
+  if (c === '/models') return openModels();
+  if (c === '/plans') return openPlans();
+  if (c === '/settings') return openSettings();
+  if (c === '/limits') {
     const l = st.limits, u = st.usage;
-    return print(`План ${st.planName}\nзапросы ${u.r}/${l.req}\nтокены ${u.t}/${l.tok}\nрасход $${u.c.toFixed(5)}/${l.bud} в день\nсообщение до ${l.inTok} токенов, ответ до ${l.maxTok}`, 's');
+    return say('sys', `План ${st.planName}: запросы ${u.r}/${l.req}, токены ${u.t}/${l.tok}, расход $${u.c.toFixed(5)}/${l.bud} в день. Сообщение до ${l.inTok} токенов, ответ до ${l.maxTok}.`);
   }
-  if (cmd === '/code') { const j = await call('/code', { code: arg }); print(`План ${j.plan} активирован`, 's'); return enter(); }
-  if (cmd === '/clear') { out.innerHTML = ''; hist = []; return; }
-  if (cmd === '/logout') { localStorage.removeItem('kc_token'); location.reload(); return; }
-  print('Неизвестная команда. /help', 'e');
+  if (c === '/model') {
+    const m = st.models.find(x => x.id === arg);
+    if (!m) return say('err', 'Нет такой модели. Открой /models');
+    if (!m.cap) return say('err', `${m.name} недоступна на плане ${st.planName}`);
+    model = m.id; renderHead(); return say('sys', 'Модель: ' + m.name);
+  }
+  if (c === '/code') {
+    const j = await call('/code', { code: arg });
+    say('sys', `План ${j.plan} активирован`);
+    return enter();
+  }
+  if (c === '/clear') return clearChat();
+  if (c === '/help') return say('sys', '/models — модели · /model ID — выбрать · /plans — тарифы · /limits — лимиты · /code КОД — активировать план · /settings — настройки · /clear — очистить чат · /logout — выйти');
+  if (c === '/logout') return logout();
+  say('err', 'Неизвестная команда. /help');
 }
 
 async function run(text) {
-  const m = st.models.find(x => x.id === model);
-  if (!m || !m.cap) return print(`Модель недоступна на плане ${st.planName}. Выбери другую: /models`, 'e');
+  if (!st.models.some(m => m.id === model && m.cap)) return say('err', 'Модель недоступна на твоём плане. Выбери другую: /models');
+  say('user', '❯ ' + text);
   hist.push({ role: 'user', content: text });
-  const t0 = Date.now(), sp = print('', 's');
-  const tick = setInterval(() => { sp.textContent = `⠋ думаю… ${((Date.now() - t0) / 1000).toFixed(1)} с`; }, 150);
+  const t0 = Date.now();
+  const sp = el('div', 'msg think', '✻ Думаю…');
+  $('#log').appendChild(sp);
+  $('#log').scrollTop = 1e9;
+  const tick = setInterval(() => { sp.textContent = `✻ Думаю… ${((Date.now() - t0) / 1000).toFixed(1)} с`; }, 150);
   try {
     const j = await call('/chat', { model, messages: hist.slice(-12) });
     hist.push({ role: 'assistant', content: j.reply });
-    sp.remove(); print(j.reply, 'a');
-    st = await call('/me'); renderTop();
+    sp.remove();
+    say('bot', j.reply);
+    st = await call('/me');
+    renderHead();
   } catch (e) {
-    hist.pop(); sp.remove(); print('Ошибка: ' + e.message, 'e');
+    hist.pop();
+    sp.remove();
+    say('err', 'Ошибка: ' + e.message);
+    if (/endpoint|unavailable|closed/i.test(e.message)) say('hint', 'Эта модель сейчас недоступна у провайдера. Выбери другую: /models');
   } finally { clearInterval(tick); }
 }
 
+$('#mask').onclick = e => { if (e.target.id === 'mask') closeM(); };
+$('#login').onclick = () => auth('login');
+$('#reg').onclick = () => auth('register');
+$('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') auth('login'); });
+$('#in').addEventListener('input', e => showMenu(e.target.value));
 $('#in').addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   const t = e.target.value.trim();
   e.target.value = '';
-  if (!t) return;
-  print('❯ ' + t, 'u');
+  showMenu('');
+  if (!t || busy) return;
+  busy = true;
   const job = t.startsWith('/') ? command(t) : run(t);
-  job.catch(err => print('Ошибка: ' + err.message, 'e'));
+  job.catch(err => say('err', 'Ошибка: ' + err.message)).finally(() => { busy = false; });
 });
-
-$('#login').onclick = () => auth('login');
-$('#reg').onclick = () => auth('register');
-$('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') auth('login'); });
 
 if (token) enter().catch(() => { token = ''; localStorage.removeItem('kc_token'); });
 </script>
