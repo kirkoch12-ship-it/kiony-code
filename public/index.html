@@ -93,6 +93,7 @@ const PREF = ['claude-haiku-5-5', 'gpt-6-luna', 'doubao-seed-2-0-mini-260215'];
 const CMDS = [
   ['/models', 'выбрать модель'], ['/plans', 'тарифы и подписка'], ['/limits', 'лимиты на сегодня'],
   ['/code', 'ввести код активации'], ['/settings', 'настройки'], ['/clear', 'очистить чат'],
+  ['/chats', 'чаты для агента'], ['/write', 'черновик через агента'], ['/send', 'отправить черновик'], ['/cancel', 'отменить черновик'],
   ['/help', 'помощь'], ['/logout', 'выйти'],
 ];
 let token = localStorage.getItem('kc_token') || '';
@@ -164,7 +165,8 @@ function openPlans() {
   });
 }
 
-function openSettings() {
+async function openSettings() {
+  const tg = await call('/tg');
   modal('Настройки', box => {
     box.append(el('div', 'row', `Аккаунт: ${st.email}`));
     box.append(el('div', 'row', `План: ${st.planName}${st.until ? ' до ' + new Date(st.until).toLocaleDateString('ru') : ''}`));
@@ -173,6 +175,36 @@ function openSettings() {
     const b = el('button', 'tbtn', 'Выйти из аккаунта');
     b.onclick = () => { closeM(); logout(); };
     box.append(a, b);
+
+    box.append(el('div', 'hintp', 'Telegram-агент. api_id и api_hash возьми на my.telegram.org → API development tools.'));
+    const apiId = el('input', 'f'); apiId.placeholder = 'api_id (число)'; apiId.value = tg.apiId || '';
+    const apiHash = el('input', 'f'); apiHash.placeholder = tg.hasHash ? 'api_hash сохранён (впиши новый, чтобы заменить)' : 'api_hash';
+    const dev = el('select', 'f');
+    [['pc', 'ПК'], ['phone', 'Телефон (Termux)']].forEach(([v, t]) => {
+      const o = el('option', null, t); o.value = v; if (tg.device === v) o.selected = true; dev.appendChild(o);
+    });
+    const consent = el('input'); consent.type = 'checkbox'; consent.checked = !!tg.consentAt;
+    const cl = el('label', 'hintp', 'Я понимаю, что Telegram может ограничить или заблокировать аккаунт за автоматизацию. Защита (паузы 30 минут, подтверждение каждого сообщения, только знакомые чаты) снижает риск, но полностью его не исключает. Ответственность за свой аккаунт беру на себя.');
+    cl.prepend(consent);
+    const save = el('button', 'tbtn', 'Сохранить Telegram');
+    save.onclick = async () => {
+      try {
+        await call('/tg', { apiId: apiId.value, apiHash: apiHash.value, device: dev.value, consent: consent.checked });
+        closeM(); say('sys', 'Настройки Telegram сохранены');
+      } catch (e) { closeM(); say('err', 'Ошибка: ' + e.message); }
+    };
+    const get = el('button', 'tbtn', 'Получить токен агента');
+    get.onclick = async () => {
+      try {
+        const { token } = await call('/agent/token', {});
+        closeM();
+        say('sys', 'Токен агента (храни как пароль): ' + token);
+        say('sys', dev.value === 'phone'
+          ? 'Телефон: установи Termux, выполни pkg install nodejs, положи файл tg-agent.mjs в папку и запусти: npm i telegram && node tg-agent.mjs'
+          : 'ПК: установи Node.js с nodejs.org, в папке с файлом tg-agent.mjs выполни: npm i telegram && node tg-agent.mjs');
+      } catch (e) { closeM(); say('err', 'Ошибка: ' + e.message); }
+    };
+    box.append(apiId, apiHash, dev, cl, save, get);
   });
 }
 
@@ -216,6 +248,20 @@ async function auth(action) {
   } catch (e) { $('#aerr').textContent = e.message; }
 }
 
+let taskIds = {};
+async function pollTask(id, want) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < 240000) {
+    await sleep(2500);
+    const t = await call('/task?id=' + encodeURIComponent(id));
+    if (t.status === want) return t;
+    if (t.status === 'error') { say('err', 'Ошибка: ' + t.error); return null; }
+    if (t.status === 'cancelled') return null;
+  }
+  say('err', 'Агент не ответил за 4 минуты. Проверь, что он запущен на устройстве.');
+  return null;
+}
+
 async function command(line) {
   const [c, ...r] = line.trim().split(/\s+/);
   const arg = r.join(' ');
@@ -237,6 +283,34 @@ async function command(line) {
     say('sys', `План ${j.plan} активирован`);
     return enter();
   }
+  if (c === '/chats') {
+    const { dialogs } = await call('/chats');
+    if (!dialogs.length) return say('sys', 'Чатов пока нет. Запусти агента на устройстве (токен в /settings).');
+    return dialogs.forEach((d, i) => say('sys', `${i}. ${d.title} · ${d.type === 'user' ? 'личный' : d.type === 'group' ? 'группа' : 'канал'}${d.canPost ? '' : ' · писать нельзя'}`));
+  }
+  if (c === '/write') {
+    const m = arg.match(/^(\d+)\s+([\s\S]+)$/);
+    if (!m) return say('err', 'Формат: /write НОМЕР что написать (номер из /chats)');
+    const { id } = await call('/task/new', { index: Number(m[1]), instruction: m[2], model });
+    const short = id.slice(0, 8);
+    taskIds[short] = id;
+    say('sys', `Задача ${short}: агент читает переписку и готовит черновик…`);
+    pollTask(id, 'draft')
+      .then(t => { if (t) { say('bot', t.draft); say('hint', `Отправить: /send ${short} · Отменить: /cancel ${short}`); } })
+      .catch(e => say('err', 'Ошибка: ' + e.message));
+    return;
+  }
+  if (c === '/send' || c === '/cancel') {
+    const id = taskIds[arg];
+    if (!id) return say('err', 'Нет такой задачи. Номер берётся из строки «Задача …».');
+    if (c === '/cancel') { await call('/task/cancel', { id }); return say('sys', 'Черновик отменён'); }
+    await call('/task/approve', { id });
+    say('sys', 'Подтверждено. Агент отправит сообщение через несколько секунд…');
+    pollTask(id, 'sent')
+      .then(t => { if (t) say('sys', 'Сообщение отправлено ✓'); })
+      .catch(e => say('err', 'Ошибка: ' + e.message));
+    return;
+  }
   if (c === '/clear') return clearChat();
   if (c === '/help') return say('sys', '/models — модели · /model ID — выбрать · /plans — тарифы · /limits — лимиты · /code КОД — активировать план · /settings — настройки · /clear — очистить чат · /logout — выйти');
   if (c === '/logout') return logout();
@@ -255,7 +329,7 @@ async function run(text) {
   try {
     // Ответ готовится в фоне: сначала получаем номер задачи, потом ждём результат
     stopReq = false;
-    const stopLine = el('div', 'msg hint', '■ Нажми сюда или Esc, чтобы остановить');
+    const stopLine = el('div', 'msg hint', '■ Остановить');
     stopLine.id = 'stopLine';
     stopLine.style.cursor = 'pointer';
     stopLine.onclick = () => { stopReq = true; };
