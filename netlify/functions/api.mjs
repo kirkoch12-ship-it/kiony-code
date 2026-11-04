@@ -29,7 +29,8 @@ const usageOf = async email => (await db().get(`use:${email}:${day()}`, { type: 
 const tokenOf = req => (req.headers.get('authorization') || '').replace(/^Bearer /, '');
 async function userOf(req) {
   const token = tokenOf(req);
-  return token ? db().get(`s:${token}`) : null;
+  if (!token) return null;
+  return (await db().get(`s:${token}`)) || (await db().get(`agent:${token}`));
 }
 
 function effective(u) {
@@ -79,7 +80,7 @@ async function me(req) {
 // Запуск ответа: сразу возвращаем jobId, а работу делает фоновая функция chat-background
 async function chatStart(req) {
   const token = tokenOf(req);
-  const email = token ? await db().get(`s:${token}`) : null;
+  const email = await userOf(req);
   if (!email) return json(401, { error: 'Нужен вход' });
   const { model, messages } = await req.json();
   if (!Array.isArray(messages) || !messages.length) return json(400, { error: 'Пустой запрос' });
@@ -130,6 +131,137 @@ async function code(req) {
   return json(200, { plan: PLANS[user.plan].name, per, until: user.until });
 }
 
+// ---- Telegram-агент ----
+const PAUSE_MS = 30 * 60 * 1000;
+
+async function tgGet(req) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нужен вход' });
+  const tg = (await db().get(`tg:${email}`, { type: 'json' })) || {};
+  return json(200, { apiId: tg.apiId || '', hasHash: !!tg.apiHash, device: tg.device || 'pc', consentAt: tg.consentAt || 0 });
+}
+
+async function tgSave(req) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нужен вход' });
+  const { apiId, apiHash, device, consent } = await req.json();
+  const old = (await db().get(`tg:${email}`, { type: 'json' })) || {};
+  if (!old.consentAt && consent !== true) return json(400, { error: 'Поставь галочку согласия на риск' });
+  const tg = { ...old, apiId: String(apiId || old.apiId || '').trim(), device: device === 'phone' ? 'phone' : 'pc', consentAt: old.consentAt || Date.now() };
+  if (String(apiHash || '').trim()) tg.apiHash = String(apiHash).trim();
+  if (!/^\d+$/.test(tg.apiId)) return json(400, { error: 'api_id — это число' });
+  if (!tg.apiHash) return json(400, { error: 'Нужен api_hash' });
+  await db().setJSON(`tg:${email}`, tg);
+  return json(200, { ok: true });
+}
+
+async function agentToken(req) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нужен вход' });
+  const tg = (await db().get(`tg:${email}`, { type: 'json' })) || {};
+  if (!tg.consentAt || !tg.apiHash) return json(400, { error: 'Сначала сохрани настройки Telegram' });
+  if (tg.agentToken) await db().delete(`agent:${tg.agentToken}`);
+  const token = crypto.randomBytes(24).toString('hex');
+  tg.agentToken = token;
+  await db().setJSON(`tg:${email}`, tg);
+  await db().set(`agent:${token}`, email);
+  return json(200, { token });
+}
+
+async function agentConfig(req) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нет доступа' });
+  const tg = (await db().get(`tg:${email}`, { type: 'json' })) || {};
+  return json(200, { apiId: Number(tg.apiId), apiHash: tg.apiHash });
+}
+
+async function agentDialogs(req) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нет доступа' });
+  const { dialogs } = await req.json();
+  await db().setJSON(`dlg:${email}`, Array.isArray(dialogs) ? dialogs.slice(0, 200) : []);
+  return json(200, { ok: true });
+}
+
+async function chats(req) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нужен вход' });
+  return json(200, { dialogs: (await db().get(`dlg:${email}`, { type: 'json' })) || [] });
+}
+
+async function taskNew(req) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нужен вход' });
+  const { index, instruction, model } = await req.json();
+  const chat = ((await db().get(`dlg:${email}`, { type: 'json' })) || [])[Number(index)];
+  if (!chat) return json(400, { error: 'Нет такого чата. Открой /chats' });
+  const text = String(instruction || '').trim().slice(0, 500);
+  if (!text) return json(400, { error: 'Напиши, что написать' });
+  const id = crypto.randomUUID();
+  await db().setJSON(`task:${id}`, { email, status: 'queued', chatId: chat.id, title: chat.title, instruction: text, model: model || 'claude-haiku-5-5' });
+  const ids = (await db().get(`tq:${email}`, { type: 'json' })) || [];
+  await db().setJSON(`tq:${email}`, [...ids, id].slice(-50));
+  return json(200, { id });
+}
+
+async function taskGet(req) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нужен вход' });
+  const id = new URL(req.url).searchParams.get('id') || '';
+  const t = await db().get(`task:${id}`, { type: 'json' });
+  if (!t || t.email !== email) return json(404, { error: 'Нет такой задачи' });
+  return json(200, { status: t.status, title: t.title, draft: t.draft, error: t.error });
+}
+
+// Подтверждение отправки и отмена черновика. Пауза 30 минут проверяется здесь.
+async function taskAct(req, action) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нужен вход' });
+  const { id } = await req.json();
+  const t = await db().get(`task:${id}`, { type: 'json' });
+  if (!t || t.email !== email) return json(404, { error: 'Нет такой задачи' });
+  if (action === 'cancel') {
+    if (t.status !== 'draft') return json(400, { error: 'Отменить можно только черновик' });
+    t.status = 'cancelled';
+  } else {
+    if (t.status !== 'draft') return json(400, { error: 'Этот черновик уже нельзя отправить' });
+    const last = (await db().get(`last:${email}`, { type: 'json' })) || 0;
+    const wait = last + PAUSE_MS - Date.now();
+    if (wait > 0) return json(429, { error: `Пауза между сообщениями 30 минут. Можно отправить через ${Math.ceil(wait / 60000)} мин.` });
+    await db().setJSON(`last:${email}`, Date.now());
+    t.status = 'approved';
+  }
+  await db().setJSON(`task:${id}`, t);
+  return json(200, { ok: true });
+}
+
+async function agentNext(req) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нет доступа' });
+  for (const id of (await db().get(`tq:${email}`, { type: 'json' })) || []) {
+    const t = await db().get(`task:${id}`, { type: 'json' });
+    if (t && (t.status === 'queued' || t.status === 'approved')) {
+      t.status = t.status === 'queued' ? 'drafting' : 'sending';
+      await db().setJSON(`task:${id}`, t);
+      return json(200, { task: { id, type: t.status === 'drafting' ? 'draft' : 'send', chatId: t.chatId, instruction: t.instruction, model: t.model, draft: t.draft } });
+    }
+  }
+  return json(200, { task: null });
+}
+
+async function agentReport(req) {
+  const email = await userOf(req);
+  if (!email) return json(401, { error: 'Нет доступа' });
+  const { id, draft, sent, error } = await req.json();
+  const t = await db().get(`task:${id}`, { type: 'json' });
+  if (!t || t.email !== email) return json(404, { error: 'Нет такой задачи' });
+  if (error) { t.status = 'error'; t.error = String(error).slice(0, 300); }
+  else if (sent) t.status = 'sent';
+  else if (draft !== undefined) { t.status = 'draft'; t.draft = String(draft).slice(0, 4000); }
+  await db().setJSON(`task:${id}`, t);
+  return json(200, { ok: true });
+}
+
 export default async (req) => {
   const path = new URL(req.url).pathname;
   try {
@@ -138,6 +270,17 @@ export default async (req) => {
     if (path === '/api/chat') return await chatStart(req);
     if (path === '/api/job') return await job(req);
     if (path === '/api/code') return await code(req);
+    if (path === '/api/tg') return req.method === 'GET' ? await tgGet(req) : await tgSave(req);
+    if (path === '/api/agent/token') return await agentToken(req);
+    if (path === '/api/agent/config') return await agentConfig(req);
+    if (path === '/api/agent/dialogs') return await agentDialogs(req);
+    if (path === '/api/agent/next') return await agentNext(req);
+    if (path === '/api/agent/report') return await agentReport(req);
+    if (path === '/api/chats') return await chats(req);
+    if (path === '/api/task/new') return await taskNew(req);
+    if (path === '/api/task/approve') return await taskAct(req, 'approve');
+    if (path === '/api/task/cancel') return await taskAct(req, 'cancel');
+    if (path === '/api/task') return await taskGet(req);
     return json(404, { error: 'Нет такого адреса' });
   } catch (e) {
     return json(500, { error: 'Ошибка сервера: ' + e.message });
