@@ -24,7 +24,7 @@ const costOf = (id, tokens) => MODELS[id].cost * tokens / 1e6;
 
 export default async (req) => {
   const { jobId, token, model, messages } = await req.json();
-  const email = token ? await db().get(`s:${token}`) : null;
+  const email = token ? ((await db().get(`s:${token}`)) || (await db().get(`agent:${token}`))) : null;
   const put = o => db().setJSON(`job:${jobId}`, { email, ...o });
   if (!email) return put({ status: 'error', error: 'Сессия истекла, войди заново' });
 
