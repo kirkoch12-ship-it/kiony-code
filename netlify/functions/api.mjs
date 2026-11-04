@@ -86,11 +86,16 @@ async function chatStart(req) {
 
   const jobId = crypto.randomUUID();
   await db().setJSON(`job:${jobId}`, { email, status: 'pending' });
-  await fetch(new URL(req.url).origin + '/.netlify/functions/chat-background', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jobId, token, model, messages }),
-  });
+  try {
+    const bg = await fetch(new URL(req.url).origin + '/.netlify/functions/chat-background', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jobId, token, model, messages }),
+    });
+    if (!bg.ok) await db().setJSON(`job:${jobId}`, { email, status: 'error', error: `фоновая функция не запустилась (код ${bg.status}). Проверь, что файл chat-background.mjs лежит в netlify/functions` });
+  } catch (e) {
+    await db().setJSON(`job:${jobId}`, { email, status: 'error', error: 'не удалось запустить фоновую функцию: ' + e.message });
+  }
   return json(200, { jobId });
 }
 
