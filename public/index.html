@@ -204,7 +204,9 @@ async function openSettings() {
           : 'ПК: установи Node.js с nodejs.org, в папке с файлом tg-agent.mjs выполни: npm i telegram && node tg-agent.mjs');
       } catch (e) { closeM(); say('err', 'Ошибка: ' + e.message); }
     };
-    box.append(apiId, apiHash, dev, cl, save, get);
+    const dl = el('a', 'tbtn', 'Скачать агента (tg-agent.mjs)');
+    dl.href = '/tg-agent.mjs'; dl.download = 'tg-agent.mjs'; dl.style.textDecoration = 'none';
+    box.append(dl, apiId, apiHash, dev, cl, save, get);
   });
 }
 
