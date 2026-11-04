@@ -96,7 +96,7 @@ const CMDS = [
   ['/help', 'помощь'], ['/logout', 'выйти'],
 ];
 let token = localStorage.getItem('kc_token') || '';
-let st = null, model = PREF[0], hist = [], busy = false;
+let st = null, model = PREF[0], hist = [], busy = false, stopReq = false;
 
 const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
 const say = (cls, text) => { const d = el('div', 'msg ' + cls, text); $('#log').appendChild(d); $('#log').scrollTop = 1e9; return d; };
@@ -254,13 +254,20 @@ async function run(text) {
   const tick = setInterval(() => { sp.textContent = `✻ Думаю… ${((Date.now() - t0) / 1000).toFixed(1)} с`; }, 150);
   try {
     // Ответ готовится в фоне: сначала получаем номер задачи, потом ждём результат
+    stopReq = false;
+    const stopLine = el('div', 'msg hint', '■ Нажми сюда или Esc, чтобы остановить');
+    stopLine.id = 'stopLine';
+    stopLine.style.cursor = 'pointer';
+    stopLine.onclick = () => { stopReq = true; };
+    $('#log').appendChild(stopLine);
     const { jobId } = await call('/chat', { model, messages: hist.slice(-12) });
     let res;
     for (;;) {
       await sleep(1500);
+      if (stopReq) throw new Error('остановлено');
       res = await call('/job?id=' + encodeURIComponent(jobId));
       if (res.status !== 'pending') break;
-      if (Date.now() - t0 > 240000) throw new Error('модель отвечает слишком долго, попробуй ещё раз');
+      if (Date.now() - t0 > 120000) throw new Error('модель не ответила за 2 минуты. Выбери другую: /models');
     }
     if (res.status === 'error') throw new Error(res.error);
     hist.push({ role: 'assistant', content: res.reply });
@@ -271,12 +278,16 @@ async function run(text) {
   } catch (e) {
     hist.pop();
     sp.remove();
-    say('err', 'Ошибка: ' + e.message);
-    if (/endpoint|unavailable|closed|недоступ/i.test(e.message)) say('hint', 'Эта модель сейчас недоступна у провайдера. Выбери другую: /models');
-  } finally { clearInterval(tick); }
+    if (e.message === 'остановлено') say('sys', 'Остановлено. Можно писать дальше.');
+    else {
+      say('err', 'Ошибка: ' + e.message);
+      if (/endpoint|unavailable|closed|недоступ|2 минуты/i.test(e.message)) say('hint', 'Эта модель сейчас недоступна или отвечает слишком долго. Выбери другую: /models');
+    }
+  } finally { clearInterval(tick); document.getElementById('stopLine')?.remove(); }
 }
 
 $('#mask').onclick = e => { if (e.target.id === 'mask') closeM(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && busy) stopReq = true; });
 $('#login').onclick = () => auth('login');
 $('#reg').onclick = () => auth('register');
 $('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') auth('login'); });
