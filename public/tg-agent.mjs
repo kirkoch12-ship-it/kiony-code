@@ -34,12 +34,35 @@ async function api(path, body) {
 const { apiId, apiHash } = await api('/agent/config');
 const client = new TelegramClient(
   new StringSession(existsSync(SESS) ? readFileSync(SESS, 'utf8') : ''), apiId, apiHash, { connectionRetries: 3 });
-await client.start({
-  phoneNumber: () => rl.question('Номер телефона (+7…): '),
-  phoneCode: () => rl.question('Код из Telegram: '),
-  password: () => rl.question('Пароль двухэтапной проверки: '),
-  onError: e => console.error('Telegram:', e.message),
-});
+// Вход по QR-ссылке: код по SMS или в Telegram не нужен.
+// В Termux открываешь выведенную ссылку, Telegram спрашивает подтверждение входа — подтверждаешь.
+async function qrLogin() {
+  await client.connect();
+  await client.signInUserWithQrCode({ apiId, apiHash }, {
+    qrCode: async ({ token }) => {
+      const url = 'tg://login?token=' + Buffer.from(token).toString('base64url');
+      console.log('\nОткрой эту ссылку на телефоне и подтверди вход в Telegram:\n' + url + '\n');
+    },
+    password: () => rl.question('Пароль двухэтапной проверки: '),
+    onError: e => console.error('Ошибка входа:', e.message),
+  });
+}
+
+if (!existsSync(SESS) || !readFileSync(SESS, 'utf8').trim()) {
+  const choice = (await rl.question('Вход: 1 — по QR-ссылке (рекомендуется), 2 — по номеру и коду: ')).trim();
+  if (choice === '2') {
+    await client.start({
+      phoneNumber: () => rl.question('Номер телефона (+…): '),
+      phoneCode: () => rl.question('Код из Telegram: '),
+      password: () => rl.question('Пароль двухэтапной проверки: '),
+      onError: e => console.error('Telegram:', e.message),
+    });
+  } else {
+    await qrLogin();
+  }
+} else {
+  await client.connect();
+}
 writeFileSync(SESS, client.session.save());
 console.log('Telegram подключён. Агент работает. Чтобы остановить — Ctrl+C.');
 
