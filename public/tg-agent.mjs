@@ -5,6 +5,7 @@ import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import readline from 'node:readline/promises';
+import qrcode from 'qrcode-terminal';
 
 const CFG = 'kiony-agent.json', SESS = 'tg-session.txt', LAST = 'last-sent.txt', PAUSE = 30 * 60 * 1000;
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -41,7 +42,10 @@ async function qrLogin() {
   await client.signInUserWithQrCode({ apiId, apiHash }, {
     qrCode: async ({ token }) => {
       const url = 'tg://login?token=' + Buffer.from(token).toString('base64url');
-      console.log('\nОткрой эту ссылку на телефоне и подтверди вход в Telegram:\n' + url + '\n');
+      console.log('\nСканируй QR другим устройством, где открыт этот аккаунт Telegram:');
+      console.log('Telegram → Настройки → Устройства → Подключить устройство\n');
+      qrcode.generate(url, { small: true });
+      console.log('\nQR обновляется сам. Сканируй последний показанный код.\n');
     },
     password: () => rl.question('Пароль двухэтапной проверки: '),
     onError: e => console.error('Ошибка входа:', e.message),
