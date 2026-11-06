@@ -93,14 +93,87 @@ const PREF = ['claude-haiku-5-5', 'gpt-6-luna', 'doubao-seed-2-0-mini-260215'];
 const CMDS = [
   ['/models', 'выбрать модель'], ['/plans', 'тарифы и подписка'], ['/limits', 'лимиты на сегодня'],
   ['/code', 'ввести код активации'], ['/settings', 'настройки'], ['/clear', 'очистить чат'],
+  ['/agent', 'вкладка агента Telegram'], ['/chat', 'обычный чат'], ['/history', 'сохранённые чаты'], ['/open', 'открыть чат из истории'], ['/new', 'новый чат'],
   ['/chats', 'чаты для агента'], ['/write', 'черновик через агента'], ['/send', 'отправить черновик'], ['/cancel', 'отменить черновик'],
   ['/help', 'помощь'], ['/logout', 'выйти'],
 ];
 let token = localStorage.getItem('kc_token') || '';
 let st = null, model = PREF[0], hist = [], busy = false, stopReq = false;
+let view = 'chat', curId = null;
+const LOG = { chat: [], agent: [] };
 
 const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
-const say = (cls, text) => { const d = el('div', 'msg ' + cls, text); $('#log').appendChild(d); $('#log').scrollTop = 1e9; return d; };
+function drawLine(m) {
+  const d = el('div', 'msg ' + m.cls, m.img ? null : m.text);
+  if (m.img) d.innerHTML = `<img class="gen" alt="" src="${m.img}">`;
+  $('#log').appendChild(d);
+}
+function draw() { $('#log').innerHTML = ''; LOG[view].forEach(drawLine); $('#log').scrollTop = 1e9; }
+const say = (cls, text, v = view) => {
+  LOG[v].push({ cls, text });
+  if (v === view) { drawLine({ cls, text }); $('#log').scrollTop = 1e9; }
+};
+
+// Сохранённые чаты (в браузере, отдельно для каждого аккаунта). Free — 3 последних, платные — до 100.
+function loadChats() {
+  if (!st) return [];
+  try { return JSON.parse(localStorage.getItem('kc_chats_' + st.email) || '[]'); } catch (e) { return []; }
+}
+function saveChat() {
+  if (!st) return;
+  let list = loadChats().filter(c => c.id !== curId);
+  if (hist.length) {
+    if (!curId) curId = Date.now();
+    const first = hist.find(h => h.role === 'user');
+    list.push({ id: curId, title: first ? first.content.slice(0, 40) : 'Чат', msgs: hist, t: Date.now() });
+  }
+  list.sort((a, b) => b.t - a.t);
+  try { localStorage.setItem('kc_chats_' + st.email, JSON.stringify(list.slice(0, st.planName === 'Free' ? 3 : 100))); } catch (e) {}
+}
+function openChat(x) {
+  hist = x.msgs.slice(); curId = x.id; view = 'chat';
+  LOG.chat = hist.map(h => h.img
+    ? { cls: 'bot', img: h.img }
+    : { cls: h.role === 'user' ? 'user' : 'bot', text: h.role === 'user' ? '❯ ' + h.content : h.content });
+  draw();
+  say('hint', `Открыт чат: ${x.title}`);
+}
+
+// Агент Telegram: команды и ответы идут во вкладку «агент», а не в обычный чат
+async function agentCmd(c, arg) {
+  const A = (cls, text) => say(cls, text, 'agent');
+  if (c === '/chats') {
+    const { dialogs } = await call('/chats');
+    if (!dialogs.length) return A('sys', 'Чатов пока нет. Запусти агента на устройстве (токен в /settings).');
+    return dialogs.forEach((d, i) => A('sys', `${i}. ${d.title} · ${d.type === 'user' ? 'личный' : d.type === 'group' ? 'группа' : 'канал'}${d.canPost ? '' : ' · писать нельзя'}`));
+  }
+  if (c === '/write') {
+    const m = arg.match(/^(\d+)\s+([\s\S]+)$/);
+    if (!m) return A('err', 'Формат: /write НОМЕР что написать (номер из /chats)');
+    const { id } = await call('/task/new', { index: Number(m[1]), instruction: m[2], model });
+    const short = id.slice(0, 8);
+    taskIds[short] = id;
+    A('sys', `Задача ${short}: агент читает переписку и готовит черновик…`);
+    pollTask(id, 'draft')
+      .then(t => { if (t) { A('bot', t.draft); A('hint', `Отправить: /send ${short} · Отменить: /cancel ${short}`); } })
+      .catch(e => A('err', 'Ошибка: ' + e.message));
+    return;
+  }
+  if (c === '/cancel') {
+    const id = taskIds[arg];
+    if (!id) return A('err', 'Нет такой задачи. Номер берётся из строки «Задача …».');
+    await call('/task/cancel', { id });
+    return A('sys', 'Черновик отменён');
+  }
+  // /send
+  const id = taskIds[arg];
+  if (!id) return A('err', 'Нет такой задачи. Номер берётся из строки «Задача …».');
+  await call('/task/approve', { id });
+  A('sys', 'Подтверждено. Агент отправит сообщение через несколько секунд…');
+  pollTask(id, 'sent')
+    .then(t => { if (t) A('sys', 'Сообщение отправлено ✓'); })
+    .catch(e => A('err', 'Ошибка: ' + e.message));
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Все запросы идут через сервер. Ключ CometAPI на странице не нужен.
@@ -125,8 +198,10 @@ function renderHead() {
 }
 
 function clearChat() {
-  $('#log').innerHTML = '';
   hist = [];
+  saveChat();
+  curId = null; view = 'chat'; LOG.chat = [];
+  draw();
   say('sys', 'Чат очищен.');
 }
 
@@ -257,16 +332,17 @@ async function pollTask(id, want) {
     await sleep(2500);
     const t = await call('/task?id=' + encodeURIComponent(id));
     if (t.status === want) return t;
-    if (t.status === 'error') { say('err', 'Ошибка: ' + t.error); return null; }
+    if (t.status === 'error') { say('err', 'Ошибка: ' + t.error, 'agent'); return null; }
     if (t.status === 'cancelled') return null;
   }
-  say('err', 'Агент не ответил за 4 минуты. Проверь, что он запущен на устройстве.');
+  say('err', 'Агент не ответил за 4 минуты. Проверь, что он запущен на устройстве.', 'agent');
   return null;
 }
 
 async function command(line) {
   const [c, ...r] = line.trim().split(/\s+/);
   const arg = r.join(' ');
+  if (['/chats', '/write', '/send', '/cancel'].includes(c)) return agentCmd(c, arg);
   if (c === '/models') return openModels();
   if (c === '/plans') return openPlans();
   if (c === '/settings') return openSettings();
@@ -313,6 +389,29 @@ async function command(line) {
       .catch(e => say('err', 'Ошибка: ' + e.message));
     return;
   }
+  if (c === '/agent') {
+    view = 'agent'; draw();
+    if (!LOG.agent.length) say('hint', 'Агент: /chats, /write НОМЕР задача, /send КОД, /cancel КОД. Обычный чат: /chat', 'agent');
+    return;
+  }
+  if (c === '/chat') { view = 'chat'; return draw(); }
+  if (c === '/history') {
+    const list = loadChats();
+    if (!list.length) return say('sys', 'Сохранённых чатов пока нет.');
+    list.forEach((x, i) => say('sys', `${i}. ${x.title} · ${new Date(x.t).toLocaleString('ru', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`));
+    return say('hint', 'Открыть: /open НОМЕР · Новый чат: /new');
+  }
+  if (c === '/open') {
+    const x = loadChats()[Number(arg)];
+    if (!x) return say('err', 'Нет такого чата. Список: /history');
+    return openChat(x);
+  }
+  if (c === '/new') {
+    saveChat();
+    hist = []; curId = null; view = 'chat'; LOG.chat = [];
+    draw();
+    return say('sys', 'Новый чат.');
+  }
   if (c === '/clear') return clearChat();
   if (c === '/help') return say('sys', '/models — модели · /model ID — выбрать · /plans — тарифы · /limits — лимиты · /code КОД — активировать план · /settings — настройки · /clear — очистить чат · /logout — выйти');
   if (c === '/logout') return logout();
@@ -320,6 +419,7 @@ async function command(line) {
 }
 
 async function run(text) {
+  if (view === 'agent') return say('hint', 'Ты в агенте. Команды: /chats, /write НОМЕР задача, /send КОД, /cancel КОД. Обычный чат: /chat', 'agent');
   if (!st.models.some(m => m.id === model && m.cap)) return say('err', 'Модель недоступна на твоём плане. Выбери другую: /models');
   say('user', '❯ ' + text);
   hist.push({ role: 'user', content: text });
@@ -347,12 +447,14 @@ async function run(text) {
     }
     if (res.status === 'error') throw new Error(res.error);
     hist.push({ role: 'assistant', content: res.reply });
+    saveChat();
     sp.remove();
     say('bot', res.reply);
     st = await call('/me');
     renderHead();
   } catch (e) {
     hist.pop();
+    saveChat();
     sp.remove();
     if (e.message === 'остановлено') say('sys', 'Остановлено. Можно писать дальше.');
     else {
