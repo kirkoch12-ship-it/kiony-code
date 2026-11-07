@@ -28,27 +28,39 @@ export default async (req) => {
   const put = o => db().setJSON(`job:${jobId}`, { email, ...o });
   if (!email) return put({ status: 'error', error: 'Сессия истекла, войди заново' });
 
+  const key = `use:${email}:${day()}`;
+  let reserved = false, u = null, estC = 0, M = null;
   try {
-    const M = MODELS[model];
+    M = MODELS[model];
     if (!M) throw new Error('Такой модели нет');
     const { plan, per } = effective(await db().get(`u:${email}`, { type: 'json' }));
     const p = PLANS[plan], bud = p.bud[per], cap = M.caps[plan];
     if (!cap) throw new Error(`${M.name} недоступна на плане ${p.name}`);
 
-    const msgs = messages.slice(-12).map(m => ({
+    // Вход должен влезать в лимит плана: самые старые сообщения убираем, последнее — целиком
+    const limit = p.inTok * 3;
+    let msgs = messages.slice(-12).map(m => ({
       role: m.role === 'assistant' ? 'assistant' : 'user',
       content: String(m.content).slice(0, 20000),
     }));
-    const last = msgs[msgs.length - 1].content;
-    if (last.length > p.inTok * 3) throw new Error(`Сообщение длиннее ${p.inTok} токенов на плане ${p.name}`);
-
+    if (msgs[msgs.length - 1].content.length > limit) throw new Error(`Сообщение длиннее ${p.inTok} токенов на плане ${p.name}`);
+    while (msgs.length > 1 && msgs.reduce((s, m) => s + m.content.length, 0) > limit) msgs = msgs.slice(1);
     const inChars = msgs.reduce((s, m) => s + m.content.length, 0);
     const estT = Math.ceil(inChars / 1.2) + p.maxTok;
-    const u = (await db().get(`use:${email}:${day()}`, { type: 'json' })) || { r: 0, t: 0, c: 0, m: {} };
+
+    u = (await db().get(key, { type: 'json' })) || { r: 0, t: 0, c: 0, m: {} };
     if (u.r >= p.req) throw new Error(`Лимит запросов на сегодня исчерпан (${p.req})`);
     if (u.t >= p.tok) throw new Error(`Лимит токенов на сегодня исчерпан (${p.tok})`);
     if ((u.m[model] || 0) >= cap) throw new Error(`${M.name}: лимит ${cap} в день исчерпан`);
-    if (u.c + costOf(model, estT) > bud) throw new Error(`Дневной бюджет исчерпан ($${bud}). Сбросится завтра`);
+    estC = costOf(model, estT);
+    if (u.c + estC > bud) throw new Error(`Дневной бюджет исчерпан ($${bud}). Сбросится завтра`);
+
+    // Резервируем запрос до вызова модели, чтобы параллельные ответы не превысили лимит
+    u.r++;
+    u.m[model] = (u.m[model] || 0) + 1;
+    u.c += estC;
+    await db().setJSON(key, u);
+    reserved = true;
 
     const r = await fetch('https://api.cometapi.com/v1/chat/completions', {
       method: 'POST',
@@ -61,13 +73,21 @@ export default async (req) => {
 
     const reply = j.choices?.[0]?.message?.content || '';
     const tokens = j.usage?.total_tokens || Math.ceil((inChars + reply.length) / 3);
-    u.r++;
-    u.m[model] = (u.m[model] || 0) + 1;
-    u.t += tokens;
-    u.c += costOf(model, tokens);
-    await db().setJSON(`use:${email}:${day()}`, u);
+    // Заменяем оценку расхода реальным
+    const fresh = (await db().get(key, { type: 'json' })) || u;
+    fresh.t += tokens;
+    fresh.c += costOf(model, tokens) - estC;
+    await db().setJSON(key, fresh);
     await put({ status: 'done', reply });
   } catch (e) {
+    if (reserved) {
+      // Ответ не получен: возвращаем запрос и оценку расхода
+      const fresh = (await db().get(key, { type: 'json' })) || u;
+      fresh.r = Math.max(0, fresh.r - 1);
+      fresh.m[model] = Math.max(0, (fresh.m[model] || 1) - 1);
+      fresh.c = Math.max(0, fresh.c - estC);
+      await db().setJSON(key, fresh);
+    }
     await put({ status: 'error', error: e.message });
   }
 };
