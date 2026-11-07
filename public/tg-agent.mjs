@@ -70,6 +70,23 @@ if (!existsSync(SESS) || !readFileSync(SESS, 'utf8').trim()) {
 writeFileSync(SESS, client.session.save());
 console.log('Telegram подключён. Агент работает. Чтобы остановить — Ctrl+C.');
 
+// Сторожевой таймер: если связь с Telegram пропала больше 3 минут, агент завершится,
+// а цикл перезапуска в Termux запустит его заново (вход повторно не нужен).
+let lastOk = Date.now();
+setInterval(async () => {
+  try {
+    await Promise.race([
+      client.getMe(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут')), 20000)),
+    ]);
+    lastOk = Date.now();
+  } catch (e) { /* связи нет, ждём */ }
+  if (Date.now() - lastOk > 180000) {
+    console.error('Нет связи с Telegram больше 3 минут. Перезапускаю агента…');
+    process.exit(1);
+  }
+}, 60000);
+
 const entities = new Map();          // id чата -> объект чата из Telegram (только из списка переписок)
 let lastSent = Number(existsSync(LAST) ? readFileSync(LAST, 'utf8') : 0);
 
