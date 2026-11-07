@@ -89,11 +89,20 @@ async function syncDialogs() {
 
 // Черновик: агент читает последние 30 сообщений этого чата и просит модель написать текст
 async function makeDraft(t) {
+  const { limits } = await api('/me');                  // лимит входа для твоего плана
   const msgs = (await client.getMessages(entities.get(t.chatId), { limit: 30 })).reverse();
-  const ctx = msgs.filter(m => m.message).map(m => `${m.out ? 'Я' : 'Собеседник'}: ${m.message}`).join('\n');
+  const tail = `\n\nЗадача: ${t.instruction}\nНапиши только текст сообщения, без пояснений и кавычек.`;
+  const room = limits.inTok * 3 - tail.length - 200;
+  let ctx = '';
+  for (const m of [...msgs].reverse()) {                // от новых к старым, пока влезает
+    if (!m.message) continue;
+    const line = `${m.out ? 'Я' : 'Собеседник'}: ${m.message}\n`;
+    if (ctx.length + line.length > room) break;
+    ctx = line + ctx;
+  }
   const { jobId } = await api('/chat', {
     model: t.model,
-    messages: [{ role: 'user', content: `Переписка:\n${ctx}\n\nЗадача: ${t.instruction}\nНапиши только текст сообщения, без пояснений и кавычек.` }],
+    messages: [{ role: 'user', content: `Переписка:\n${ctx}${tail}` }],
   });
   for (let i = 0; i < 90; i++) {
     await sleep(2000);
