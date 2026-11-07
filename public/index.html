@@ -140,6 +140,11 @@ function openChat(x) {
 }
 
 // Агент Telegram: команды и ответы идут во вкладку «агент», а не в обычный чат
+// Обновить счётчики (запросы, токены, расход) с сервера
+async function refresh() {
+  try { st = await call('/me'); renderHead(); } catch (e) {}
+}
+
 async function agentCmd(c, arg) {
   const A = (cls, text) => say(cls, text, 'agent');
   if (c === '/chats') {
@@ -155,7 +160,7 @@ async function agentCmd(c, arg) {
     taskIds[short] = id;
     A('sys', `Задача ${short}: агент читает переписку и готовит черновик…`);
     pollTask(id, 'draft')
-      .then(t => { if (t) { A('bot', t.draft); A('hint', `Отправить: /send ${short} · Отменить: /cancel ${short}`); } })
+      .then(t => { refresh(); if (t) { A('bot', t.draft); A('hint', `Отправить: /send ${short} · Отменить: /cancel ${short}`); } })
       .catch(e => A('err', 'Ошибка: ' + e.message));
     return;
   }
@@ -171,7 +176,7 @@ async function agentCmd(c, arg) {
   await call('/task/approve', { id });
   A('sys', 'Подтверждено. Агент отправит сообщение через несколько секунд…');
   pollTask(id, 'sent')
-    .then(t => { if (t) A('sys', 'Сообщение отправлено ✓'); })
+    .then(t => { refresh(); if (t) A('sys', 'Сообщение отправлено ✓'); })
     .catch(e => A('err', 'Ошибка: ' + e.message));
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -198,6 +203,7 @@ function renderHead() {
 }
 
 function clearChat() {
+  stopReq = true;
   hist = [];
   saveChat();
   curId = null; view = 'chat'; LOG.chat = [];
@@ -408,6 +414,7 @@ async function command(line) {
   }
   if (c === '/new') {
     saveChat();
+    stopReq = true;
     hist = []; curId = null; view = 'chat'; LOG.chat = [];
     draw();
     return say('sys', 'Новый чат.');
@@ -475,10 +482,15 @@ $('#in').addEventListener('keydown', e => {
   const t = e.target.value.trim();
   e.target.value = '';
   showMenu('');
-  if (!t || busy) return;
+  if (!t) return;
+  if (t.startsWith('/')) {
+    say('user', '❯ ' + t);
+    command(t).catch(err => say('err', 'Ошибка: ' + err.message));
+    return;
+  }
+  if (busy) return say('hint', 'Ответ ещё готовится. Нажми ■ Остановить или дождись ответа.');
   busy = true;
-  const job = t.startsWith('/') ? command(t) : run(t);
-  job.catch(err => say('err', 'Ошибка: ' + err.message)).finally(() => { busy = false; });
+  run(t).catch(err => say('err', 'Ошибка: ' + err.message)).finally(() => { busy = false; });
 });
 
 if (token) enter().catch(() => { token = ''; localStorage.removeItem('kc_token'); });
