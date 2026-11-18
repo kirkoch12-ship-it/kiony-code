@@ -10,6 +10,8 @@ const PLANS = [
 ];
 
 const MODELS = {
+  'gpt-oss-20b-free':            { name: 'gpt-oss-20b (free)', cost: 0, caps: [15, 15, 20, 25] },
+  'gpt-6-2-sol':                 { name: 'GPT-6.2 Sol', cost: 6, caps: [2, 5, 10, 20] },
   'doubao-seed-2-0-mini-260215': { name: 'Doubao-Seed-2.0', cost: 0.03, caps: [8, 12, 16, 24] },
   'claude-haiku-5-5':            { name: 'Claude Haiku 5.5', cost: 0.1,  caps: [3, 25, 40, 55] },
   'gpt-6-luna':                  { name: 'GPT-6 Luna',       cost: 0.1,  caps: [3, 25, 40, 55] },
@@ -240,10 +242,21 @@ async function agentNext(req) {
   if (!email) return json(401, { error: 'Нет доступа' });
   for (const id of (await db().get(`tq:${email}`, { type: 'json' })) || []) {
     const t = await db().get(`task:${id}`, { type: 'json' });
-    if (t && (t.status === 'queued' || t.status === 'approved')) {
-      t.status = t.status === 'queued' ? 'drafting' : 'sending';
+    // Отправка, которая зависла в «sending», не повторяется: могла уйти уже. Помечаем ошибкой.
+    if (t && t.status === 'sending' && Date.now() - (t.takenAt || 0) > 180000) {
+      t.status = 'error';
+      t.error = 'агент не подтвердил отправку. Проверь чат вручную, чтобы не отправить дважды';
       await db().setJSON(`task:${id}`, t);
-      return json(200, { task: { id, type: t.status === 'drafting' ? 'draft' : 'send', chatId: t.chatId, instruction: t.instruction, model: t.model, draft: t.draft } });
+      continue;
+    }
+    // Черновик, который висит в «drafting» дольше 3 минут (агент отключился), берём снова
+    const stuckDraft = t && t.status === 'drafting' && Date.now() - (t.takenAt || 0) > 180000;
+    if (t && (t.status === 'queued' || t.status === 'approved' || stuckDraft)) {
+      const kind = t.status === 'approved' ? 'send' : 'draft';
+      t.status = kind === 'draft' ? 'drafting' : 'sending';
+      t.takenAt = Date.now();
+      await db().setJSON(`task:${id}`, t);
+      return json(200, { task: { id, type: kind, chatId: t.chatId, instruction: t.instruction, model: t.model, draft: t.draft } });
     }
   }
   return json(200, { task: null });
