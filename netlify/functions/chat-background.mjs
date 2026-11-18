@@ -8,11 +8,21 @@ const PLANS = [
   { name: 'Ultra',   pr: { m: 10, w: 3.5 }, bud: { m: 0.1,   w: 0.15 },  req: 250, tok: 500000, inTok: 8000, maxTok: 4096 },
 ];
 
+// provider: какой сервис вызывать. upstream: точное имя модели у провайдера, если оно отличается.
+// cost: $ за 1 млн токенов (для coarena берём большую из цен in/out — с запасом).
 const MODELS = {
-  'doubao-seed-2-0-mini-260215': { name: 'Doubao-Seed-2.0', cost: 0.03, caps: [8, 12, 16, 24] },
-  'claude-haiku-5-5':            { name: 'Claude Haiku 5.5', cost: 0.1,  caps: [3, 25, 40, 55] },
-  'gpt-6-luna':                  { name: 'GPT-6 Luna',       cost: 0.1,  caps: [3, 25, 40, 55] },
-  'gemini-4-argon':              { name: 'Gemini 4 Argon',   cost: 2,    caps: [5, 10, 20, 40] },
+  'gpt-oss-20b-free':            { name: 'gpt-oss-20b (free)', provider: 'comet',   cost: 0,    caps: [15, 15, 20, 25] },
+  'doubao-seed-2-0-mini-260215': { name: 'Doubao-Seed-2.0',    provider: 'comet',   cost: 0.03, caps: [8, 12, 16, 24] },
+  'claude-haiku-5-5':            { name: 'Claude Haiku 5.5',   provider: 'comet',   cost: 0.1,  caps: [3, 25, 40, 55] },
+  'gpt-6-luna':                  { name: 'GPT-6 Luna',         provider: 'comet',   cost: 0.1,  caps: [3, 25, 40, 55] },
+  'gemini-4-argon':              { name: 'Gemini 4 Argon',     provider: 'comet',   cost: 2,    caps: [5, 10, 20, 40] },
+  'gpt-6-2-sol':                 { name: 'GPT-6.2 Sol',        provider: 'coarena', cost: 6,    caps: [2, 5, 10, 20] },
+};
+
+// Адреса и ключи берутся из настроек Netlify (Environment variables), в коде их нет
+const PROVIDERS = {
+  comet:   { base: () => 'https://api.cometapi.com/v1', key: () => process.env.COMETAPI_KEY },
+  coarena: { base: () => process.env.COARENA_URL,       key: () => process.env.COARENA_KEY },
 };
 
 const db = () => getStore('kiony-code');
@@ -29,13 +39,17 @@ export default async (req) => {
   if (!email) return put({ status: 'error', error: 'Сессия истекла, войди заново' });
 
   const key = `use:${email}:${day()}`;
-  let reserved = false, u = null, estC = 0, M = null;
+  let reserved = false, u = null, estC = 0;
   try {
-    M = MODELS[model];
+    const M = MODELS[model];
     if (!M) throw new Error('Такой модели нет');
     const { plan, per } = effective(await db().get(`u:${email}`, { type: 'json' }));
     const p = PLANS[plan], bud = p.bud[per], cap = M.caps[plan];
     if (!cap) throw new Error(`${M.name} недоступна на плане ${p.name}`);
+
+    const P = PROVIDERS[M.provider];
+    const base = P.base(), apiKey = P.key();
+    if (!base || !apiKey) throw new Error(`Не настроен адрес или ключ провайдера ${M.provider} в настройках сайта`);
 
     // Вход должен влезать в лимит плана: самые старые сообщения убираем, последнее — целиком
     const limit = p.inTok * 3;
@@ -62,10 +76,10 @@ export default async (req) => {
     await db().setJSON(key, u);
     reserved = true;
 
-    const r = await fetch('https://api.cometapi.com/v1/chat/completions', {
+    const r = await fetch(base.replace(/\/+$/, '') + '/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.COMETAPI_KEY}` },
-      body: JSON.stringify({ model, messages: msgs, max_tokens: p.maxTok }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({ model: M.upstream || model, messages: msgs, max_tokens: p.maxTok }),
       signal: AbortSignal.timeout(90000),
     });
     const j = await r.json().catch(() => ({}));
